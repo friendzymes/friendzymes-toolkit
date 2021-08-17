@@ -54,10 +54,18 @@ func main() {
 	fmt.Printf("\n")
 	bsubCodonTable := codonTables["bsub-py79-cdss"]
 	ecoliCodonTable := codonTables["ecoli-k12-cdss"]
+
 	bothSpeciesTable, _ := codon.CompromiseCodonTable(bsubCodonTable, ecoliCodonTable, 0.1)
 
 	codon.WriteCodonJSON(bothSpeciesTable, "data/codon-table/bsub-ecoli.json")
 	codonTables["bsub-ecoli"] = bothSpeciesTable
+
+	starvationCodonTable := codonTables["bsub-py79-cdss-starvation"]
+	specialBothSpeciesTable, _ := codon.CompromiseCodonTable(starvationCodonTable, ecoliCodonTable, 0.1)
+
+	codon.WriteCodonJSON(specialBothSpeciesTable, "data/codon-table/starvation-ecoli.json")
+	codonTables["starvation-ecoli"] = specialBothSpeciesTable
+
 	fmt.Println("Tables created and optimized! You could find each one as json files inside data/codon-table folder.")
 	fmt.Printf("\n")
 
@@ -89,6 +97,10 @@ func main() {
 		bsubEcoliCodonTable := codonTables["bsub-ecoli"]
 		enzymeOptimizedBsubEcoli := CodonOptimization(enzyme.Sequence, bsubEcoliCodonTable)
 
+		// Strategy #3:  Codon optimize for two species; e.g Bacillus Subtilis KO7 and E. coli K12
+		starvationEcoliCodonTable := codonTables["starvation-ecoli"]
+		enzymeOptimizedStarvationEcoli := CodonOptimization(enzyme.Sequence, starvationEcoliCodonTable)
+
 		fmt.Println("Fixing optimized sequences if it has any problems...")
 
 		strategyOne := fixSequence(enzymeOptimizedBsub, bsubKO7CodonTable, hostGenomeKmerTable)
@@ -97,6 +109,7 @@ func main() {
 		//copyStrategyTwo := TwoCdsWithoutRepetition(strategyTwo, bsubStarvationCodonTable)
 		strategyThree := fixSequence(enzymeOptimizedBsubEcoli, bsubEcoliCodonTable, hostGenomeKmerTable)
 		//copyStrategyThree := TwoCdsWithoutRepetition(strategyThree, bsubEcoliCodonTable)
+		strategyFour := fixSequence(enzymeOptimizedStarvationEcoli, starvationEcoliCodonTable, hostGenomeKmerTable)
 
 		output = append(output,
 			fasta.Fasta{enzyme.Name + " | Codon Optimized By Strategy #1 Bacillus Subtilis KO7", strategyOne},
@@ -105,6 +118,7 @@ func main() {
 			//fasta.Fasta{enzyme.Name + " | Copy without repetititon of Codon Optimized By Strategy #2 Bacillus Subtilis Starvation Genes", copyStrategyTwo},
 			fasta.Fasta{enzyme.Name + " | Codon Optimized By Strategy #3 Both species Bacillus Subtilis KO7 and E. coli K12", strategyThree},
 			//fasta.Fasta{enzyme.Name + " | Copy without repetititon of Codon Optimized By Strategy #3 Both species Bacillus Subtilis KO7 and E. coli K12", copyStrategyThree},
+			fasta.Fasta{enzyme.Name + " | Codon Optimized By Strategy #4 Bacillus Subtilis Starvation genes and E. coli K12", strategyFour},
 		)
 
 	}
@@ -209,7 +223,7 @@ func fixSequence(sequence string, codonTable codon.Table, genomeKmerTable map[st
 	removeSequenceFunc := synthesis.RemoveSequence(forbiddenSequences)
 
 	// Function#2: Remove secondary structures from begining to 1/3 of the sequence
-	removeSecondaryFunc := synthesis.RemoveSecondaryStructure(len(sequence) / 3)
+	removeSecondaryFunc := synthesis.RemoveHairpin(20, 200)
 
 	// Function#3: Remove repetition greater than 10 inside the sequence
 	removeRepeatFunc := synthesis.RemoveRepeat(10)
@@ -221,7 +235,7 @@ func fixSequence(sequence string, codonTable codon.Table, genomeKmerTable map[st
 	var functions []func(string, chan synthesis.DnaSuggestion, *sync.WaitGroup)
 	functions = append(functions, removeSequenceFunc, removeRepeatFunc, genomeRemoveRepeatFunc, removeSecondaryFunc)
 
-	fixedSeq, _ := synthesis.FixCds(":memory:", sequence, codonTable, functions)
+	fixedSeq, _, _ := synthesis.FixCds(":memory:", sequence, codonTable, functions)
 	// Because FixCds actually remove stop codon we will concatenate it
 	return fixedSeq + "TAA"
 }
@@ -238,7 +252,7 @@ func TwoCdsWithoutRepetition(sequence string, codonTable codon.Table) string {
 	var functions []func(string, chan synthesis.DnaSuggestion, *sync.WaitGroup)
 	functions = append(functions, removeSequenceFunc, removeRepeatFunc, globalRemoveRepeatFunc)
 
-	fixedSeq, _ := synthesis.FixCds(":memory:", sequence, codonTable, functions)
+	fixedSeq, _, _ := synthesis.FixCds(":memory:", sequence, codonTable, functions)
 	// Because FixCds actually remove stop codon we will concatenate it
 	return fixedSeq + "TAA"
 }
