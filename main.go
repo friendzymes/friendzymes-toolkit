@@ -7,9 +7,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Open-Science-Global/poly/checks"
 	"github.com/Open-Science-Global/poly/io/fasta"
 	"github.com/Open-Science-Global/poly/io/genbank"
+	"github.com/Open-Science-Global/poly/linearfold"
 	"github.com/Open-Science-Global/poly/synthesis"
+	"github.com/Open-Science-Global/poly/transform"
 	"github.com/Open-Science-Global/poly/transform/codon"
 )
 
@@ -104,12 +107,16 @@ func main() {
 		fmt.Println("Fixing optimized sequences if it has any problems...")
 
 		strategyOne := fixSequence(enzymeOptimizedBsub, bsubKO7CodonTable, hostGenomeKmerTable)
+		//comparingResults("Strategy#1", enzymeOptimizedBsub, strategyOne)
 		//copyStrategyOne := TwoCdsWithoutRepetition(strategyOne, bsubKO7CodonTable)
 		strategyTwo := fixSequence(enzymeOptimizedStarvation, bsubStarvationCodonTable, hostGenomeKmerTable)
+		//comparingResults("Strategy#2", enzymeOptimizedStarvation, strategyTwo)
 		//copyStrategyTwo := TwoCdsWithoutRepetition(strategyTwo, bsubStarvationCodonTable)
 		strategyThree := fixSequence(enzymeOptimizedBsubEcoli, bsubEcoliCodonTable, hostGenomeKmerTable)
+		//comparingResults("Strategy#3", enzymeOptimizedBsubEcoli, strategyThree)
 		//copyStrategyThree := TwoCdsWithoutRepetition(strategyThree, bsubEcoliCodonTable)
 		strategyFour := fixSequence(enzymeOptimizedStarvationEcoli, starvationEcoliCodonTable, hostGenomeKmerTable)
+		//comparingResults("Strategy#4", enzymeOptimizedStarvationEcoli, strategyFour)
 
 		output = append(output,
 			fasta.Fasta{enzyme.Name + " | Codon Optimized By Strategy #1 Bacillus Subtilis KO7", strategyOne},
@@ -133,10 +140,9 @@ func CodonOptimization(enzymeSequence string, codonTable codon.Table) string {
 	// Poly generally makes Codon Optimization by receiving a list of protein sequences, but we actually have now CDSs
 	// So we should first translate CDSs. We will be using the Eubacterial genetic code table 11, you could take a look
 	// at this table in https://www.ncbi.nlm.nih.gov/Taxonomy/Utils/wprintgc.cgi
-	enzymeTranslated, _ := codon.Translate(enzymeSequence, codon.GetCodonTable(11))
 
 	// Optimize sequence using the protein sequence and codon table
-	optimizedSequence, _ := codon.Optimize(enzymeTranslated, codonTable)
+	optimizedSequence, _ := codon.Optimize(enzymeSequence, codonTable)
 
 	// Lets check if the codon optimization actually works by making some checks:
 	// First one is if both codon sequences are different
@@ -147,7 +153,7 @@ func CodonOptimization(enzymeSequence string, codonTable codon.Table) string {
 
 	// Check if both translated sequences are equal
 	protein, _ := codon.Translate(optimizedSequence, codon.GetCodonTable(11))
-	if protein != enzymeTranslated {
+	if protein != enzymeSequence {
 		fmt.Println("These protein sequences aren't equal, some problem occur. They should be equal because codon optimization don't change any aminoacid.")
 		os.Exit(0)
 	}
@@ -222,7 +228,7 @@ func fixSequence(sequence string, codonTable codon.Table, genomeKmerTable map[st
 	forbiddenSequences := forbiddenSequencesList()
 	removeSequenceFunc := synthesis.RemoveSequence(forbiddenSequences)
 
-	// Function#2: Remove secondary structures from begining to 1/3 of the sequence
+	// Function#2: Remove secondary structures
 	removeSecondaryFunc := synthesis.RemoveHairpin(20, 200)
 
 	// Function#3: Remove repetition greater than 10 inside the sequence
@@ -231,6 +237,8 @@ func fixSequence(sequence string, codonTable codon.Table, genomeKmerTable map[st
 	// Function#4: Remove repetitions between sequence and host genome
 	genomeRemoveRepeatFunc := synthesis.GlobalRemoveRepeat(20, genomeKmerTable)
 
+	// Function#5: Fix a GC content if necessary
+	//gcContentFixFunc := synthesis.GcContentFixer(0.4, 0.6)
 	// Added all those functions to a list and pass through FixCds function that will take care of our problems
 	var functions []func(string, chan synthesis.DnaSuggestion, *sync.WaitGroup)
 	functions = append(functions, removeSequenceFunc, removeRepeatFunc, genomeRemoveRepeatFunc, removeSecondaryFunc)
@@ -255,4 +263,22 @@ func TwoCdsWithoutRepetition(sequence string, codonTable codon.Table) string {
 	fixedSeq, _, _ := synthesis.FixCds(":memory:", sequence, codonTable, functions)
 	// Because FixCds actually remove stop codon we will concatenate it
 	return fixedSeq + "TAA"
+}
+
+func comparingResults(title string, sequence string, fixed string) {
+	fmt.Println(title + " - Stats")
+	fmt.Println("GC Content: ", checks.GcContent(fixed))
+	fmt.Println("Free energy before:")
+	secondaryStructureData(sequence)
+	fmt.Println("Free energy after:")
+	secondaryStructureData(fixed)
+}
+
+func secondaryStructureData(sequence string) {
+
+	transcript := transform.Transcription(sequence)
+	_, energy := linearfold.CONTRAfoldV2(transcript, linearfold.DefaultBeamSize)
+	//fmt.Println("Dot Bracket format: ", dot_bracket)
+	fmt.Println(energy)
+
 }
